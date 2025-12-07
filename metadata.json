@@ -1,0 +1,8 @@
+{
+  "name": "HabitPlanet",
+  "description": "A gamified habit tracker with virtual pets, social groups, and AI-powered insights.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ]
+}
