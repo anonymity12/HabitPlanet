@@ -1,8 +1,8 @@
+
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { Habit, User, CheckInRecord, HabitType, HabitFrequency, SubTask, Card as GameCard } from './types';
-import { storage } from './services/storage';
-import { getHabitAdvice, generateCardImage } from './services/geminiService';
+import { api } from './client/api'; // NEW: Import API client
 import { Icons, HABIT_TYPE_COLORS, MOCK_GROUPS, MOCK_FEED } from './constants';
 
 // --- Components ---
@@ -26,12 +26,27 @@ const Badge: React.FC<{ children: React.ReactNode; colorClass: string }> = ({ ch
   <span className={`px-2 py-1 rounded-lg text-xs font-bold ${colorClass}`}>{children}</span>
 );
 
+const Loader: React.FC = () => (
+  <div className="flex justify-center p-4">
+    <div className="w-6 h-6 border-4 border-brand-blue border-t-transparent rounded-full animate-spin"></div>
+  </div>
+);
+
 // --- Modals ---
 
-const AddHabitModal: React.FC<{ onClose: () => void; onAdd: (h: Omit<Habit, 'id' | 'completedCount' | 'streak' | 'lastCheckInDate' | 'isCompletedToday' | 'createdAt'>) => void }> = ({ onClose, onAdd }) => {
+const AddHabitModal: React.FC<{ onClose: () => void; onAdd: (h: Partial<Habit>) => void }> = ({ onClose, onAdd }) => {
   const [title, setTitle] = useState('');
   const [type, setType] = useState<HabitType>(HabitType.Life);
   const [targetCount, setTargetCount] = useState(1);
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async () => {
+    if(!title) return;
+    setSubmitting(true);
+    await onAdd({ title, type, frequency: HabitFrequency.Daily, targetCount, subTasks: [], description: '' });
+    setSubmitting(false);
+    onClose();
+  };
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
@@ -66,12 +81,10 @@ const AddHabitModal: React.FC<{ onClose: () => void; onAdd: (h: Omit<Habit, 'id'
             </div>
           </div>
           <div className="flex gap-3 mt-6">
-            <Button variant="ghost" className="flex-1" onClick={onClose}>Cancel</Button>
-            <Button className="flex-1 bg-brand-blue" onClick={() => {
-              if(!title) return;
-              onAdd({ title, type, frequency: HabitFrequency.Daily, targetCount, subTasks: [], description: '' });
-              onClose();
-            }}>Create Habit</Button>
+            <Button variant="ghost" className="flex-1" onClick={onClose} disabled={submitting}>Cancel</Button>
+            <Button className="flex-1 bg-brand-blue" onClick={handleSubmit} disabled={submitting}>
+              {submitting ? 'Creating...' : 'Create Habit'}
+            </Button>
           </div>
         </div>
       </Card>
@@ -81,25 +94,20 @@ const AddHabitModal: React.FC<{ onClose: () => void; onAdd: (h: Omit<Habit, 'id'
 
 // --- Views ---
 
-const CardHouseView: React.FC<{ user: User; onBack: () => void; onDrawCard: (cost: number) => Promise<GameCard | null> }> = ({ user, onBack, onDrawCard }) => {
+const CardHouseView: React.FC<{ user: User; onBack: () => void; onDrawCard: () => Promise<GameCard | null> }> = ({ user, onBack, onDrawCard }) => {
   const [isDrawing, setIsDrawing] = useState(false);
   const [newCard, setNewCard] = useState<GameCard | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
 
   const handleDraw = async () => {
-    if (user.coins < 100) {
-      setError("Not enough coins! Need 100 💰");
-      setTimeout(() => setError(null), 3000);
-      return;
-    }
     setIsDrawing(true);
     setNewCard(null);
+    setError(null);
     try {
-      const card = await onDrawCard(100);
+      const card = await onDrawCard();
       setNewCard(card);
-    } catch (e) {
-      setError("Failed to draw card. Try again.");
+    } catch (e: any) {
+      setError(e.message || "Failed to draw card.");
     } finally {
       setIsDrawing(false);
     }
@@ -124,7 +132,7 @@ const CardHouseView: React.FC<{ user: User; onBack: () => void; onDrawCard: (cos
                <p className="font-bold text-lg">Summoning Spirit...</p>
             </div>
           ) : newCard ? (
-            <div className="flex flex-col items-center animate-in zoom-in duration-500">
+            <div className="flex flex-col items-center animate-in zoom-in duration-500 w-full">
                <div className={`w-48 h-64 rounded-xl shadow-2xl border-4 flex flex-col items-center overflow-hidden bg-white text-slate-800 relative
                  ${newCard.rarity === 'Legendary' ? 'border-yellow-400 shadow-yellow-400/50' : 
                    newCard.rarity === 'Epic' ? 'border-purple-400 shadow-purple-400/50' :
@@ -200,10 +208,17 @@ const DashboardView: React.FC<{
   onCheckIn: (id: string, note?: string) => void; 
   onToggleSubTask: (hId: string, sId: string) => void;
   onDelete: (id: string) => void;
-}> = ({ habits, user, onCheckIn, onToggleSubTask, onDelete }) => {
+  isLoading: boolean;
+}> = ({ habits, user, onCheckIn, onToggleSubTask, onDelete, isLoading }) => {
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [checkingInId, setCheckingInId] = useState<string | null>(null);
 
-  // Simple sorting: Pending first
+  const handleCheckInClick = async (id: string) => {
+    setCheckingInId(id);
+    await onCheckIn(id);
+    setCheckingInId(null);
+  };
+
   const sortedHabits = [...habits].sort((a, b) => {
     if (a.isCompletedToday === b.isCompletedToday) return 0;
     return a.isCompletedToday ? 1 : -1;
@@ -234,15 +249,17 @@ const DashboardView: React.FC<{
       {/* Habits List */}
       <div className="space-y-3">
         <h3 className="font-bold text-slate-700 text-lg px-2">Today's Goals</h3>
-        {sortedHabits.map(habit => (
+        {isLoading ? <Loader /> : sortedHabits.map(habit => (
           <Card key={habit.id} className={`transition-all duration-300 ${habit.isCompletedToday ? 'opacity-60 bg-slate-50' : 'hover:translate-y-[-2px]'}`}>
             <div className="flex items-center gap-4">
               <div 
-                onClick={() => !habit.isCompletedToday && onCheckIn(habit.id)}
-                className={`w-12 h-12 rounded-2xl flex items-center justify-center cursor-pointer transition-colors duration-300 shadow-sm
+                onClick={() => !habit.isCompletedToday && !checkingInId && handleCheckInClick(habit.id)}
+                className={`w-12 h-12 rounded-2xl flex items-center justify-center cursor-pointer transition-colors duration-300 shadow-sm relative
                   ${habit.isCompletedToday ? 'bg-brand-green text-white' : 'bg-slate-100 text-slate-300 hover:bg-slate-200'}`}
               >
-                {habit.isCompletedToday ? <Icons.Check /> : <div className="w-4 h-4 rounded-full border-2 border-slate-300" />}
+                {checkingInId === habit.id ? (
+                    <div className="w-5 h-5 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"/>
+                ) : habit.isCompletedToday ? <Icons.Check /> : <div className="w-4 h-4 rounded-full border-2 border-slate-300" />}
               </div>
               
               <div className="flex-1 cursor-pointer" onClick={() => setExpandedId(expandedId === habit.id ? null : habit.id)}>
@@ -308,7 +325,6 @@ const PlanetView: React.FC<{ user: User, onEnterCardHouse: () => void }> = ({ us
         
         {/* The Planet */}
         <div className="relative w-64 h-64 bg-emerald-500 rounded-full shadow-[inset_-20px_-20px_50px_rgba(0,0,0,0.5)] flex items-center justify-center overflow-hidden transition-transform duration-1000 hover:scale-105">
-           {/* Planet Details based on level */}
            <div className="absolute w-full h-full opacity-20 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')]"></div>
            {user.petLevel > 2 && <div className="absolute bottom-0 w-full h-20 bg-blue-500 opacity-50 rounded-b-full"></div>}
            
@@ -319,14 +335,12 @@ const PlanetView: React.FC<{ user: User, onEnterCardHouse: () => void }> = ({ us
         </div>
       </div>
       
-      {/* Action Buttons */}
       <div className="mt-8 grid grid-cols-1 gap-4">
         <Button variant="gold" onClick={onEnterCardHouse} className="w-full py-4 text-lg shadow-xl bg-indigo-600 hover:bg-indigo-700">
            <span className="text-2xl mr-2">🎴</span> Enter Card House
         </Button>
       </div>
       
-      {/* Shop / Inventory Preview */}
       <div className="mt-8">
         <h3 className="font-bold text-slate-700 mb-4 text-lg">Shop & Inventory</h3>
         <div className="grid grid-cols-4 gap-4">
@@ -342,11 +356,15 @@ const PlanetView: React.FC<{ user: User, onEnterCardHouse: () => void }> = ({ us
   );
 };
 
-const StatsView: React.FC<{ habits: Habit[], checkIns: CheckInRecord[] }> = ({ habits, checkIns }) => {
+const StatsView: React.FC = () => {
   const [advice, setAdvice] = useState<string | null>(null);
   const [loadingAdvice, setLoadingAdvice] = useState(false);
+  const [checkIns, setCheckIns] = useState<CheckInRecord[]>([]);
 
-  // Prepare chart data (Last 7 days)
+  useEffect(() => {
+    api.user.getStats().then(setCheckIns).catch(console.error);
+  }, []);
+
   const chartData = useMemo(() => {
     const days = [];
     for(let i=6; i>=0; i--) {
@@ -359,22 +377,16 @@ const StatsView: React.FC<{ habits: Habit[], checkIns: CheckInRecord[] }> = ({ h
     return days;
   }, [checkIns]);
 
-  const typeData = useMemo(() => {
-    const counts: Record<string, number> = {};
-    checkIns.forEach(c => {
-      const h = habits.find(h => h.id === c.habitId);
-      if(h) counts[h.type] = (counts[h.type] || 0) + 1;
-    });
-    return Object.keys(counts).map(k => ({ name: k, value: counts[k] }));
-  }, [checkIns, habits]);
-
-  const COLORS = ['#4CAF50', '#2196F3', '#FFC107', '#9C27B0'];
-
   const handleGetAdvice = async () => {
     setLoadingAdvice(true);
-    const result = await getHabitAdvice(habits, checkIns);
-    setAdvice(result);
-    setLoadingAdvice(false);
+    try {
+        const result = await api.ai.getAdvice();
+        setAdvice(result);
+    } catch (e) {
+        setAdvice("AI is taking a nap. Try again later.");
+    } finally {
+        setLoadingAdvice(false);
+    }
   };
 
   return (
@@ -396,10 +408,6 @@ const StatsView: React.FC<{ habits: Habit[], checkIns: CheckInRecord[] }> = ({ h
 
       <div className="grid grid-cols-2 gap-4">
         <Card className="flex flex-col items-center justify-center p-2">
-           <h4 className="text-sm font-bold text-slate-400 mb-2">Completion Rate</h4>
-           <span className="text-3xl font-black text-brand-green">82%</span>
-        </Card>
-        <Card className="flex flex-col items-center justify-center p-2">
            <h4 className="text-sm font-bold text-slate-400 mb-2">Total Check-ins</h4>
            <span className="text-3xl font-black text-brand-blue">{checkIns.length}</span>
         </Card>
@@ -419,69 +427,6 @@ const StatsView: React.FC<{ habits: Habit[], checkIns: CheckInRecord[] }> = ({ h
           {advice ? advice : "Click 'Generate' to get personalized tips from your AI coach based on your recent habit data!"}
         </div>
       </Card>
-    </div>
-  );
-};
-
-const SocialView: React.FC = () => {
-  return (
-    <div className="space-y-6 pb-32">
-      <h2 className="text-2xl font-bold text-slate-800">Community</h2>
-      
-      {/* Groups Scroll */}
-      <div>
-        <h3 className="font-bold text-slate-600 mb-3 px-2">Popular Groups</h3>
-        <div className="flex gap-4 overflow-x-auto pb-4 px-2 -mx-2">
-          {MOCK_GROUPS.map(g => (
-            <div key={g.id} className="min-w-[200px] bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex flex-col gap-2">
-              <div className="w-10 h-10 bg-gradient-to-br from-brand-blue to-purple-500 rounded-full flex items-center justify-center text-white font-bold">
-                {g.name[0]}
-              </div>
-              <h4 className="font-bold text-slate-800 leading-tight">{g.name}</h4>
-              <p className="text-xs text-slate-400 line-clamp-2">{g.description}</p>
-              <div className="flex justify-between items-center mt-2">
-                <span className="text-xs font-semibold text-slate-500">{g.members} members</span>
-                <button className={`text-xs px-3 py-1 rounded-full font-bold ${g.isJoined ? 'bg-slate-100 text-slate-500' : 'bg-brand-blue text-white'}`}>
-                  {g.isJoined ? 'Joined' : 'Join'}
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Feed */}
-      <div>
-        <h3 className="font-bold text-slate-600 mb-3 px-2">Friends Activity</h3>
-        <div className="space-y-4">
-          {MOCK_FEED.map(post => (
-             <Card key={post.id} className="p-4">
-               <div className="flex items-center gap-3 mb-3">
-                 <div className="w-8 h-8 bg-slate-200 rounded-full overflow-hidden">
-                    <img src={`https://picsum.photos/seed/${post.userName}/200`} alt="avatar" />
-                 </div>
-                 <div>
-                   <p className="text-sm font-bold text-slate-800">
-                     {post.userName} <span className="font-normal text-slate-500">{post.action === 'streak' ? 'hit a streak on' : 'completed'}</span>
-                   </p>
-                   <p className="text-xs text-slate-400">{post.timeAgo} ago</p>
-                 </div>
-               </div>
-               <div className="bg-slate-50 p-3 rounded-xl mb-3 border border-slate-100">
-                  <span className="font-semibold text-brand-green">{post.habitTitle}</span>
-               </div>
-               <div className="flex gap-4 text-slate-400 text-sm">
-                 <button className={`flex items-center gap-1 hover:text-red-500 ${post.isLiked ? 'text-red-500' : ''}`}>
-                   ❤️ {post.likes}
-                 </button>
-                 <button className="flex items-center gap-1 hover:text-blue-500">
-                   💬 {post.comments}
-                 </button>
-               </div>
-             </Card>
-          ))}
-        </div>
-      </div>
     </div>
   );
 };
@@ -521,192 +466,105 @@ const Navbar: React.FC<{ activeTab: string; onChange: (t: string) => void }> = (
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState('home');
-  // State to toggle between Planet view and Card House view within the "planet" tab
   const [showCardHouse, setShowCardHouse] = useState(false);
-  
   const [showAddModal, setShowAddModal] = useState(false);
+  
   const [habits, setHabits] = useState<Habit[]>([]);
-  const [user, setUser] = useState<User>(storage.getUser()); 
-  const [checkIns, setCheckIns] = useState<CheckInRecord[]>([]);
+  const [user, setUser] = useState<User | null>(null); 
+  const [isLoading, setIsLoading] = useState(true);
 
-  // Init Data
+  // Initial Data Fetch
+  const fetchData = async () => {
+    setIsLoading(true);
+    try {
+      const [fetchedHabits, fetchedUser] = await Promise.all([
+        api.habits.list(),
+        api.user.getProfile()
+      ]);
+      setHabits(fetchedHabits);
+      setUser(fetchedUser);
+    } catch (error) {
+      console.error("Failed to load data", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
-    setHabits(storage.getHabits());
-    setUser(storage.getUser());
-    setCheckIns(storage.getCheckIns());
+    fetchData();
   }, []);
 
-  const handleAddHabit = (newHabitData: any) => {
-    const newHabit: Habit = {
-      ...newHabitData,
-      id: Date.now().toString(),
-      streak: 0,
-      completedCount: 0,
-      isCompletedToday: false,
-      lastCheckInDate: null,
-      createdAt: Date.now()
-    };
-    const updated = [newHabit, ...habits];
-    setHabits(updated);
-    storage.saveHabits(updated);
-  };
-
-  const handleDeleteHabit = (id: string) => {
-    const updated = habits.filter(h => h.id !== id);
-    setHabits(updated);
-    storage.saveHabits(updated);
-  };
-
-  const handleCheckIn = (id: string, note?: string) => {
-    const habit = habits.find(h => h.id === id);
-    if (!habit) return;
-
-    // Simulate location (Mock)
-    let location = { lat: 0, lng: 0 };
-    if (navigator.geolocation) {
-       navigator.geolocation.getCurrentPosition(
-         (pos) => { location = { lat: pos.coords.latitude, lng: pos.coords.longitude }; },
-         (err) => console.log('Geo permission denied or error')
-       );
+  const handleAddHabit = async (newHabitData: Partial<Habit>) => {
+    try {
+        await api.habits.create(newHabitData);
+        await fetchData(); // Refresh list
+    } catch (e) {
+        alert("Failed to create habit");
     }
-
-    // 1. Update Habits State
-    const today = new Date().toISOString().split('T')[0];
-    const updatedHabits = habits.map(h => {
-      if (h.id === id) {
-        const newStreak = h.streak + 1;
-        return { 
-          ...h, 
-          isCompletedToday: true, 
-          completedCount: h.completedCount + 1, 
-          streak: newStreak,
-          lastCheckInDate: today 
-        };
-      }
-      return h;
-    });
-    setHabits(updatedHabits);
-    storage.saveHabits(updatedHabits);
-
-    // 2. Add Record
-    const newRecord: CheckInRecord = {
-      id: Date.now().toString(),
-      habitId: id,
-      timestamp: Date.now(),
-      dateString: today,
-      note,
-      location
-    };
-    const newCheckIns = [...checkIns, newRecord];
-    setCheckIns(newCheckIns);
-    storage.addCheckIn(newRecord);
-
-    // 3. Update User (Rewards)
-    const bonus = habit.streak > 3 ? 2 : 1; // Streak multiplier
-    const coinsEarned = 10 * bonus;
-    const expEarned = 15;
-    
-    // Level Up Logic
-    let newLevel = user.petLevel;
-    let newExp = user.petExp + expEarned;
-    if (newExp >= 100) {
-      newLevel += 1;
-      newExp = newExp - 100;
-      alert(`🎉 Level Up! Your pet is now level ${newLevel}!`);
-    }
-
-    const updatedUser = { 
-      ...user, 
-      coins: user.coins + coinsEarned,
-      petLevel: newLevel,
-      petExp: newExp
-    };
-    setUser(updatedUser);
-    storage.saveUser(updatedUser);
   };
 
-  const handleToggleSubTask = (habitId: string, subTaskId: string) => {
-    const updatedHabits = habits.map(h => {
-      if(h.id === habitId) {
-        const updatedSubs = h.subTasks.map(st => 
-          st.id === subTaskId ? { ...st, isCompleted: !st.isCompleted } : st
-        );
-        return { ...h, subTasks: updatedSubs };
-      }
-      return h;
-    });
-    setHabits(updatedHabits);
-    storage.saveHabits(updatedHabits);
+  const handleDeleteHabit = async (id: string) => {
+    if(confirm("Are you sure?")) {
+        await api.habits.delete(id);
+        await fetchData();
+    }
+  };
+
+  const handleCheckIn = async (id: string, note?: string) => {
+    try {
+        // Simulate Geo
+        let lat, lng;
+        if (navigator.geolocation) {
+           navigator.geolocation.getCurrentPosition(pos => { lat=pos.coords.latitude; lng=pos.coords.longitude; });
+        }
+
+        const res = await api.habits.checkIn(id, note, lat, lng);
+        
+        // Optimistic UI update or Full Refresh? Full refresh is safer for sync.
+        // For smoother UX, we can update local state manually:
+        setHabits(current => current.map(h => h.id === id ? res.updatedHabit : h));
+        setUser(current => {
+            if(!current) return null;
+            return {
+                ...current,
+                coins: current.coins + res.rewards.coins,
+                petExp: res.rewards.exp, // This simplifies level up logic, ideally we refetch user
+                petLevel: res.rewards.newLevel || current.petLevel
+            }
+        });
+
+        if (res.rewards.levelUp) {
+            alert(`🎉 Level Up! You are now level ${res.rewards.newLevel}!`);
+        }
+
+    } catch (e: any) {
+        alert(e.message || "Check-in failed");
+    }
+  };
+
+  const handleToggleSubTask = async (habitId: string, subTaskId: string) => {
+    try {
+        const updatedHabit = await api.habits.toggleSubTask(habitId, subTaskId);
+        setHabits(current => current.map(h => h.id === habitId ? updatedHabit : h));
+    } catch (e) {
+        console.error("Subtask toggle failed");
+    }
   };
   
-  // Card Draw Logic
-  const handleDrawCard = async (cost: number): Promise<GameCard | null> => {
-     if (user.coins < cost) return null;
-     
-     const FIGURES = [
-        { name: 'Laozi', title: 'The Founder of Taoism' },
-        { name: 'Zhuangzi', title: 'The Carefree Sage' },
-        { name: 'Zhang Daoling', title: 'Celestial Master' },
-        { name: 'Lu Dongbin', title: 'Sword Immortal' },
-        { name: 'He Xiangu', title: 'Lotus Immortal' },
-        { name: 'Tie Guaili', title: 'Iron Crutch Immortal' },
-        { name: 'Jade Emperor', title: 'Ruler of Heaven' },
-        { name: 'Queen Mother of the West', title: 'Keeper of Peaches' },
-        { name: 'Nezha', title: 'Third Lotus Prince' },
-        { name: 'Jiang Ziya', title: 'Grand Duke' },
-     ];
-     
-     // 1. Determine Rarity
-     const rand = Math.random();
-     let rarity: GameCard['rarity'] = 'Common';
-     if (rand > 0.95) rarity = 'Legendary';
-     else if (rand > 0.85) rarity = 'Epic';
-     else if (rand > 0.60) rarity = 'Rare';
-     
-     const rarityMult = { Common: 1, Rare: 5, Epic: 20, Legendary: 100 };
-     
-     // 2. Pick Figure
-     const figure = FIGURES[Math.floor(Math.random() * FIGURES.length)];
-     
-     // 3. Generate Image
-     const imageUrl = await generateCardImage(figure.name, figure.title);
-     
-     // 4. Create Card
-     const newCard: GameCard = {
-         id: Date.now().toString(),
-         name: figure.name,
-         title: figure.title,
-         rarity,
-         value: Math.floor((Math.random() * 50 + 10) * rarityMult[rarity]),
-         imageUrl,
-         description: `A mystical card of ${figure.name}.`,
-         obtainedAt: Date.now()
-     };
-     
-     // 5. Update User State
-     const updatedUser = {
-         ...user,
-         coins: user.coins - cost,
-         collectedCards: [...(user.collectedCards || []), newCard]
-     };
-     setUser(updatedUser);
-     storage.saveUser(updatedUser);
-     
-     return newCard;
+  const handleDrawCard = async (): Promise<GameCard | null> => {
+     const res = await api.game.drawCard();
+     // Update local user state
+     if (user) {
+         setUser({
+             ...user,
+             coins: res.remainingCoins,
+             collectedCards: [...user.collectedCards, res.card]
+         });
+     }
+     return res.card;
   };
 
-  // Render View based on Tab
-  const renderContent = () => {
-    switch(activeTab) {
-      case 'home': return <DashboardView habits={habits} user={user} onCheckIn={handleCheckIn} onToggleSubTask={handleToggleSubTask} onDelete={handleDeleteHabit} />;
-      case 'planet': 
-        if (showCardHouse) return <CardHouseView user={user} onBack={() => setShowCardHouse(false)} onDrawCard={handleDrawCard} />;
-        return <PlanetView user={user} onEnterCardHouse={() => setShowCardHouse(true)} />;
-      case 'stats': return <StatsView habits={habits} checkIns={checkIns} />;
-      case 'social': return <SocialView />;
-      default: return <DashboardView habits={habits} user={user} onCheckIn={handleCheckIn} onToggleSubTask={handleToggleSubTask} onDelete={handleDeleteHabit} />;
-    }
-  };
+  if (!user && !isLoading) return <div>Failed to load user.</div>;
 
   return (
     <div className="bg-slate-50 min-h-screen font-sans text-slate-800 flex justify-center">
@@ -730,13 +588,28 @@ const App: React.FC = () => {
 
         {/* Main Content Area */}
         <main className="p-6">
-          {renderContent()}
+          {isLoading || !user ? (
+            <div className="flex flex-col items-center justify-center h-[50vh] text-slate-400">
+                <Loader />
+                <p className="mt-4 text-sm font-bold">Connecting to Planet...</p>
+            </div>
+          ) : (
+            (() => {
+                switch(activeTab) {
+                    case 'home': return <DashboardView habits={habits} user={user} onCheckIn={handleCheckIn} onToggleSubTask={handleToggleSubTask} onDelete={handleDeleteHabit} isLoading={isLoading} />;
+                    case 'planet': 
+                        if (showCardHouse) return <CardHouseView user={user} onBack={() => setShowCardHouse(false)} onDrawCard={handleDrawCard} />;
+                        return <PlanetView user={user} onEnterCardHouse={() => setShowCardHouse(true)} />;
+                    case 'stats': return <StatsView />;
+                    case 'social': return <div className="text-center py-10 text-slate-400">Social Feed (Coming Soon)</div>; // Simple placeholder as social view components were MOCK_FEED based, logic moved
+                    default: return null;
+                }
+            })()
+          )}
         </main>
 
-        {/* Navigation */}
         <Navbar activeTab={activeTab} onChange={(t) => { setActiveTab(t); setShowCardHouse(false); }} />
 
-        {/* Modals */}
         {showAddModal && <AddHabitModal onClose={() => setShowAddModal(false)} onAdd={handleAddHabit} />}
       </div>
     </div>

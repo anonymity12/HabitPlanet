@@ -1,3 +1,4 @@
+
 export enum HabitType {
   Study = 'Study',
   Fitness = 'Fitness',
@@ -20,6 +21,7 @@ export interface SubTask {
 export interface CheckInRecord {
   id: string;
   habitId: string;
+  userId: string; // Added for backend design compliance
   timestamp: number; // Date.now()
   dateString: string; // YYYY-MM-DD
   location?: { lat: number; lng: number };
@@ -29,12 +31,13 @@ export interface CheckInRecord {
 
 export interface Habit {
   id: string;
+  userId: string; // Added for backend design compliance
   title: string;
-  description: string; // e.g., "Drink 8 cups"
+  description: string;
   type: HabitType;
   frequency: HabitFrequency;
-  targetCount: number; // e.g., 8 cups
-  completedCount: number; // Reset daily
+  targetCount: number;
+  completedCount: number;
   subTasks: SubTask[]; 
   streak: number;
   lastCheckInDate: string | null;
@@ -48,18 +51,19 @@ export interface Card {
   title: string;
   rarity: 'Common' | 'Rare' | 'Epic' | 'Legendary';
   value: number;
-  imageUrl: string | null; // Base64 or URL
+  imageUrl: string | null;
   description: string;
   obtainedAt: number;
 }
 
 export interface User {
+  id: string; // Added ID
   name: string;
   coins: number;
   petLevel: number;
   petExp: number;
   petName: string;
-  equippedSkin: string; // 'default', 'robot', 'ninja'
+  equippedSkin: string;
   inventory: string[];
   collectedCards: Card[];
 }
@@ -81,4 +85,28 @@ export interface FeedItem {
   likes: number;
   comments: number;
   isLiked: boolean;
+}
+
+// --- API DTOs (Data Transfer Objects) ---
+
+export interface ApiResponse<T> {
+  success: boolean;
+  data?: T;
+  error?: string;
+}
+
+export interface CheckInResponse {
+  record: CheckInRecord;
+  updatedHabit: Habit;
+  rewards: {
+    coins: number;
+    exp: number;
+    levelUp: boolean;
+    newLevel?: number;
+  };
+}
+
+export interface DrawCardResponse {
+  card: Card;
+  remainingCoins: number;
 }
