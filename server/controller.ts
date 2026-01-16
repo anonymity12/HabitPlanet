@@ -1,7 +1,7 @@
 
 import { db } from "./db";
 import { GeminiService } from "./geminiNodeWrapper";
-import { Habit, CheckInRecord, User, Card, ApiResponse, CheckInResponse, DrawCardResponse, HabitFrequency, HabitType } from "../types";
+import { Habit, CheckInRecord, User, Card, ApiResponse, CheckInResponse, DrawCardResponse, HabitFrequency, HabitType } from "../src/types";
 
 /**
  * 模拟后端控制器

@@ -1,5 +1,5 @@
 
-import { ServerController } from "../server/controller";
+import { ServerController } from "../../server/controller";
 import { Habit, User, CheckInResponse, Card, DrawCardResponse, CheckInRecord } from "../types";
 
 /**
