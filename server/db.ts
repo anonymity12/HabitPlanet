@@ -1,5 +1,5 @@
 
-import { Habit, User, CheckInRecord, HabitType, HabitFrequency } from "../types";
+import { Habit, User, CheckInRecord, HabitType, HabitFrequency } from "../src/types";
 
 // Keys for LocalStorage
 const KEYS = {

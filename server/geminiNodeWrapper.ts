@@ -1,6 +1,6 @@
 
 import { GoogleGenAI } from "@google/genai";
-import { Habit, CheckInRecord } from "../types";
+import { Habit, CheckInRecord } from "../src/types";
 
 // In a real backend, this would be process.env.API_KEY loaded from .env file
 // 在真实后端，这里会从 .env 文件加载 API Key
