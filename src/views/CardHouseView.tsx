@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { User, Card as GameCard } from '../../types';
-import { Button } from '../ui';
+import { User, Card as GameCard } from '../types';
+import { Button } from '../components/ui';
 
 interface CardHouseViewProps {
   user: User;

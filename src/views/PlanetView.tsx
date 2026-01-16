@@ -1,6 +1,6 @@
 import React from 'react';
-import { User } from '../../types';
-import { Button } from '../ui';
+import { User } from '../types';
+import { Button } from '../components/ui';
 
 interface PlanetViewProps {
   user: User;

@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
-import { CheckInRecord } from '../../types';
-import { Icons } from '../../constants';
-import { Button, Card } from '../ui';
-import { api } from '../../client/api';
+import { CheckInRecord } from '../types';
+import { Icons } from '../constants';
+import { Button, Card } from '../components/ui';
+import { api } from '../client/api';
 
 export const StatsView: React.FC = () => {
   const [advice, setAdvice] = useState<string | null>(null);

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Habit, HabitType, HabitFrequency } from '../../types';
-import { Button } from '../ui/Button';
-import { Card } from '../ui/Card';
+import { Habit, HabitType, HabitFrequency } from '../types';
+import { Button } from './ui/Button';
+import { Card } from './ui/Card';
 
 interface AddHabitModalProps {
   onClose: () => void;

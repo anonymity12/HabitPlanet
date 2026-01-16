@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Habit, User } from '../../types';
-import { Icons, HABIT_TYPE_COLORS } from '../../constants';
-import { Button, Card, Badge, Loader } from '../ui';
+import { Habit, User } from '../types';
+import { Icons, HABIT_TYPE_COLORS } from '../constants';
+import { Button, Card, Badge, Loader } from '../components/ui';
 
 interface DashboardViewProps {
   habits: Habit[];
